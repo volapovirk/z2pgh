@@ -1,7 +1,15 @@
 [package]
 name = "z2pgh"
 version = "0.1.0"
+authors = ["Vladimir Krivopalov <vladimir.krivopalov@gmail.com>"]
 edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+path = "src/main.rs"
+name = "z2pgh"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
