@@ -1,5 +1,5 @@
 use std::net::TcpListener;
-use z2pgh::run;
+use z2pgh::startup::run;
 
 #[async_std::main]
 async fn main() -> std::io::Result<()> {

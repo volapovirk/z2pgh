@@ -2,11 +2,12 @@ use std::net::TcpListener;
 
 use async_std::task;
 use surf::StatusCode;
+use z2pgh::startup::run;
 
 fn spawn_app() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
     let port = listener.local_addr().unwrap().port();
-    let _ = task::spawn(z2pgh::run(listener));
+    let _ = task::spawn(run(listener));
 
     format!("http://127.0.0.1:{port}")
 }
