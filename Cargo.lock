@@ -2947,6 +2947,9 @@ name = "uuid"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
+dependencies = [
+ "getrandom 0.2.10",
+]
 
 [[package]]
 name = "value-bag"
@@ -3218,11 +3221,13 @@ name = "z2pgh"
 version = "0.1.0"
 dependencies = [
  "async-std",
+ "chrono",
  "config",
  "serde",
  "sqlx",
  "surf",
  "tide",
+ "uuid",
 ]
 
 [[package]]

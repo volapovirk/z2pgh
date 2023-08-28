@@ -1,9 +1,15 @@
 use std::net::TcpListener;
 
-use crate::routes::*;
+use sqlx::PgPool;
 
-pub async fn run(listener: TcpListener) -> std::io::Result<()> {
-    let mut app = tide::new();
+use crate::{
+    routes::{health_check, subscribe},
+    state::State,
+};
+
+pub async fn run(listener: TcpListener, db_pool: PgPool) -> std::io::Result<()> {
+    let connection = State::new(db_pool);
+    let mut app = tide::with_state(connection);
     app.at("/health_check").get(health_check);
     app.at("/subscriptions").post(subscribe);
     app.listen(listener).await
