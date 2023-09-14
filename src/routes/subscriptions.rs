@@ -1,9 +1,9 @@
 use chrono::Utc;
+use sqlx::PgPool;
 use tide::convert::{Deserialize, Serialize};
 use tide::Request;
 use tide::Response;
 use tide::StatusCode;
-use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::state::State;
@@ -14,37 +14,53 @@ struct FormData {
     name: String,
 }
 
-pub async fn subscribe(mut req: Request<State>) -> tide::Result {
-    let request_id = Uuid::new_v4();
-    let data: FormData = req.body_form().await?;
-    let request_span = tracing::info_span!(
-        "Adding a new subscriber.",
-        %request_id,
-        subscriber_email = %data.email,
-        subscriber_name= %data.name
-    );
-    let _request_span_guard = request_span.enter();
-
-    let query_span = tracing::info_span!("Saving new subscriber details in the database");
-
-    match sqlx::query!(
-        r#"
-        INSERT INTO subscriptions (id, email, name, subscribed_at)
-        VALUES ($1, $2, $3, $4)
-        "#,
-        Uuid::new_v4(),
-        data.email,
-        data.name,
-        Utc::now()
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, db_pool),
+    fields(
+        request_id = %Uuid::new_v4(),
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
     )
-    .execute(req.state().db_pool.as_ref())
-    .instrument(query_span)
-    .await
-    {
+)]
+async fn do_subscribe(form: FormData, db_pool: &PgPool) -> tide::Result {
+    match insert_subscriber(db_pool, &form).await {
         Ok(_) => Ok(Response::new(StatusCode::Ok)),
         Err(e) => {
             tracing::error!("Failed to execute query: {}", e);
             Ok(Response::new(StatusCode::InternalServerError))
         }
     }
+}
+
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(form, pool)
+)]
+async fn insert_subscriber(pool: &PgPool, form: &FormData) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+    "#,
+        Uuid::new_v4(),
+        form.email,
+        form.name,
+        Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+        // Using the `?` operator to return early
+        // if the function failed, returning a sqlx::Error
+        // We will talk about error handling in depth later!
+    })?;
+    Ok(())
+}
+
+pub async fn subscribe(mut req: Request<State>) -> tide::Result {
+    let form: FormData = req.body_form().await?;
+    do_subscribe(form, req.state().db_pool.as_ref()).await
 }
