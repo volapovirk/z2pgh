@@ -1,4 +1,5 @@
 use sqlx::{Connection, Executor, PgConnection, PgPool};
+use surf::{Client, Response};
 use uuid::Uuid;
 use z2pgh::{
     startup::{get_connection_pool, Application},
@@ -26,6 +27,21 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 pub struct TestApp {
     pub address: String,
     pub db_pool: PgPool,
+}
+
+impl TestApp {
+    pub async fn post_subscriptions(&self, body: String) -> Response {
+        let client = Client::new();
+
+        let request = surf::post(&format!("{}/subscriptions", self.address))
+            .content_type("application/x-www-form-urlencoded")
+            .body(body);
+
+        client
+            .send(request)
+            .await
+            .expect("Failed to execute request.")
+    }
 }
 
 pub async fn spawn_app() -> TestApp {
