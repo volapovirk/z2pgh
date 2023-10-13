@@ -7,7 +7,7 @@ use tide::StatusCode;
 use uuid::Uuid;
 
 use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
-use crate::state::State;
+use crate::server_state::ServerState;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FormData {
@@ -78,7 +78,7 @@ async fn insert_subscriber(
     Ok(())
 }
 
-pub async fn subscribe(mut req: Request<State>) -> tide::Result {
+pub async fn subscribe(mut req: Request<ServerState>) -> tide::Result {
     let form: FormData = req.body_form().await?;
     do_subscribe(form, &req.state().db_pool).await
 }
