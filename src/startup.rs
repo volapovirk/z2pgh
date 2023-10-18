@@ -7,7 +7,7 @@ use crate::configuration::{DatabaseSettings, Settings};
 use crate::server_state::ServerState;
 use crate::{
     email_client::EmailClient,
-    routes::{health_check, subscribe},
+    routes::{confirm, health_check, subscribe},
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -41,7 +41,13 @@ impl Application {
         );
         let listener = TcpListener::bind(address)?;
         let port = listener.local_addr().unwrap().port();
-        let listener = run(listener, connection_pool, email_client).await?;
+        let listener = run(
+            listener,
+            connection_pool,
+            email_client,
+            configuration.application.base_url,
+        )
+        .await?;
         Ok(Self { port, listener })
     }
 
@@ -64,11 +70,13 @@ pub async fn run(
     listener: TcpListener,
     db_pool: PgPool,
     email_client: EmailClient,
+    base_url: String,
 ) -> std::io::Result<ServerListener> {
-    let state = ServerState::new(db_pool, email_client);
+    let state = ServerState::new(db_pool, email_client, base_url);
     let mut app = tide::with_state(state);
     app.with(TraceMiddleware::new());
     app.at("/health_check").get(health_check);
     app.at("/subscriptions").post(subscribe);
+    app.at("/subscriptions/confirm").get(confirm);
     app.bind(listener).await
 }
