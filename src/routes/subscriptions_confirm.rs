@@ -1,4 +1,5 @@
 use sqlx::PgPool;
+use tide::Error;
 use tide::Request;
 use tide::Response;
 use tide::StatusCode;
@@ -17,13 +18,13 @@ pub async fn confirm(req: Request<ServerState>) -> tide::Result {
     let pool = &req.state().db_pool;
     let id = match get_subscriber_id_from_token(pool, &param.subscription_token).await {
         Ok(id) => id,
-        Err(_) => return Ok(Response::new(StatusCode::InternalServerError)),
+        Err(e) => return Err(Error::new(StatusCode::InternalServerError, e)),
     };
     match id {
         None => Ok(Response::new(StatusCode::Unauthorized)),
         Some(subscriber_id) => {
-            if confirm_subscriber(pool, subscriber_id).await.is_err() {
-                return Ok(Response::new(StatusCode::InternalServerError));
+            if let Err(e) = confirm_subscriber(pool, subscriber_id).await {
+                return Err(Error::new(StatusCode::InternalServerError, e));
             }
             Ok(Response::new(StatusCode::Ok))
         }
@@ -37,11 +38,7 @@ pub async fn confirm_subscriber(pool: &PgPool, subscriber_id: Uuid) -> Result<()
         subscriber_id,
     )
     .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to execute query: {:?}", e);
-        e
-    })?;
+    .await?;
     Ok(())
 }
 #[tracing::instrument(name = "Get subscriber_id from token", skip(subscription_token, pool))]
@@ -54,10 +51,6 @@ pub async fn get_subscriber_id_from_token(
         subscription_token,
     )
     .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to execute query: {:?}", e);
-        e
-    })?;
+    .await?;
     Ok(result.map(|r| r.subscriber_id))
 }

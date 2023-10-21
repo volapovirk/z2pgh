@@ -1,3 +1,4 @@
+use anyhow::Context;
 use chrono::Utc;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -19,12 +20,26 @@ struct FormData {
 }
 
 impl TryFrom<FormData> for NewSubscriber {
-    type Error = anyhow::Error;
+    type Error = String;
 
     fn try_from(value: FormData) -> Result<Self, Self::Error> {
         let name = SubscriberName::parse(value.name)?;
         let email = SubscriberEmail::parse(value.email)?;
         Ok(Self { email, name })
+    }
+}
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error),
+}
+
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
     }
 }
 
@@ -37,7 +52,7 @@ pub async fn send_confirmation_email(
     new_subscriber: NewSubscriber,
     base_url: &str,
     subscription_token: &str,
-) -> tide::Result<()> {
+) -> anyhow::Result<()> {
     let confirmation_link = format!(
         "{}/subscriptions/confirm?subscription_token={}",
         base_url, subscription_token
@@ -55,6 +70,7 @@ pub async fn send_confirmation_email(
     email_client
         .send_email(new_subscriber.email, "Welcome!", &html_body, &plain_body)
         .await
+        .map_err(surf::Error::into_inner)
 }
 
 #[tracing::instrument(
@@ -71,41 +87,31 @@ async fn do_subscribe(
     db_pool: &PgPool,
     email_client: &EmailClient,
     base_url: &str,
-) -> tide::Result {
-    let new_subscriber = match form.try_into() {
-        Ok(new_subscriber) => new_subscriber,
-        Err(_) => return Ok(Response::new(StatusCode::BadRequest)),
-    };
+) -> Result<(), SubscribeError> {
+    let new_subscriber = form.try_into().map_err(SubscribeError::ValidationError)?;
 
-    let mut transaction = match db_pool.begin().await {
-        Ok(transaction) => transaction,
-        Err(_) => return Ok(Response::new(StatusCode::BadRequest)),
-    };
+    let mut transaction = db_pool
+        .begin()
+        .await
+        .context("Failed to acquire a Postgress connection from the pool")?;
 
-    let subscriber_id = match insert_subscriber(&mut transaction, &new_subscriber).await {
-        Ok(subscriber_id) => subscriber_id,
-        Err(_) => return Ok(Response::new(StatusCode::InternalServerError)),
-    };
+    let subscriber_id = insert_subscriber(&mut transaction, &new_subscriber)
+        .await
+        .context("Failed to insert new subsriber in the database")?;
     let subscription_token = generate_subscription_token();
-    if store_token(&mut transaction, subscriber_id, &subscription_token)
+    store_token(&mut transaction, subscriber_id, &subscription_token)
         .await
-        .is_err()
-    {
-        return Ok(Response::new(StatusCode::BadRequest));
-    }
-
-    if send_confirmation_email(email_client, new_subscriber, base_url, &subscription_token)
+        .context("Failed to store the confirmation token for a new subscriber.")?;
+    transaction
+        .commit()
         .await
-        .is_err()
-    {
-        return Ok(Response::new(StatusCode::InternalServerError));
-    }
+        .context("Failed to commit SQL transaction to store a new subscriber.")?;
 
-    if transaction.commit().await.is_err() {
-        return Ok(Response::new(StatusCode::InternalServerError));
-    }
+    send_confirmation_email(email_client, new_subscriber, base_url, &subscription_token)
+        .await
+        .context("Failed to send a confirmation email.")?;
 
-    Ok(Response::new(StatusCode::Ok))
+    Ok(())
 }
 
 #[tracing::instrument(
@@ -128,14 +134,7 @@ async fn insert_subscriber(
         Utc::now()
     )
     .execute(db_connection)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to execute query: {:?}", e);
-        e
-        // Using the `?` operator to return early
-        // if the function failed, returning a sqlx::Error
-        // We will talk about error handling in depth later!
-    })?;
+    .await?;
     Ok(subscriber_id)
 }
 
@@ -157,21 +156,24 @@ async fn store_token(
         subscriber_id,
     )
     .execute(db_connection)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to execute query: {:?}", e);
-        e
-        // Using the `?` operator to return early
-        // if the function failed, returning a sqlx::Error
-        // We will talk about error handling in depth later!
-    })?;
+    .await?;
     Ok(())
 }
 
 pub async fn subscribe(mut req: Request<ServerState>) -> tide::Result {
     let form: FormData = req.body_form().await?;
     let state = req.state();
-    do_subscribe(form, &state.db_pool, &state.email_client, &state.base_url).await
+    match do_subscribe(form, &state.db_pool, &state.email_client, &state.base_url).await {
+        Ok(_) => Ok(Response::new(StatusCode::Ok)),
+        Err(e) => match e {
+            SubscribeError::ValidationError(s) => {
+                Err(tide::Error::new(StatusCode::BadRequest, anyhow::anyhow!(s)))
+            }
+            SubscribeError::UnexpectedError(e) => {
+                Err(tide::Error::new(StatusCode::InternalServerError, e))
+            }
+        },
+    }
 }
 
 fn generate_subscription_token() -> String {
@@ -180,4 +182,17 @@ fn generate_subscription_token() -> String {
         .map(char::from)
         .take(25)
         .collect()
+}
+
+fn error_chain_fmt(
+    e: &impl std::error::Error,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    writeln!(f, "{}\n", e)?;
+    let mut current = e.source();
+    while let Some(cause) = current {
+        writeln!(f, "Caused by:\n\t{}", cause)?;
+        current = cause.source();
+    }
+    Ok(())
 }

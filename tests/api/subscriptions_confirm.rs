@@ -1,4 +1,4 @@
-use surf::{Client, StatusCode, Url};
+use surf::{Client, StatusCode};
 use wiremock::{
     matchers::{method, path},
     Mock, ResponseTemplate,
