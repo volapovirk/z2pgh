@@ -4,6 +4,7 @@ use tide::prelude::Listener;
 use tide_tracing::TraceMiddleware;
 
 use crate::configuration::{DatabaseSettings, Settings};
+use crate::routes::publish_newsletter;
 use crate::server_state::ServerState;
 use crate::{
     email_client::EmailClient,
@@ -76,6 +77,7 @@ pub async fn run(
     let mut app = tide::with_state(state);
     app.with(TraceMiddleware::new());
     app.at("/health_check").get(health_check);
+    app.at("/newsletters").post(publish_newsletter);
     app.at("/subscriptions").post(subscribe);
     app.at("/subscriptions/confirm").get(confirm);
     app.bind(listener).await
